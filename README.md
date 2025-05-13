@@ -1,12 +1,16 @@
 
-# Pac-Man Simulation with MARS
+# Pac-Man Simulation with a rule-based agent
 
 ## Authors
 
 - Natalie Puls
 - Yamam Al Shoufani
 
-## Initial Considerations
+### Game logic and original implementation
+
+this project was develpoen by Mars Group for the "KI und Geo-Informatik" lecture. more info bellow.
+
+## Initial Considerations for the pac-man agent
 
 To implement a rule-based behavior for PacMan that aims to maximize the score by collecting all pellets while avoiding ghosts, the following strategic considerations have been developed:
 

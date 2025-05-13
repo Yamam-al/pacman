@@ -1,4 +1,61 @@
+
 # Pac-Man Simulation with MARS
+
+## Authors
+
+- Natalie Puls
+- Yamam Al Shoufani
+
+## Initial Considerations
+
+To implement a rule-based behavior for PacMan that aims to maximize the score by collecting all pellets while avoiding ghosts, the following strategic considerations have been developed:
+
+### 🟡 Pellet-Seeking Behavior
+
+- **Rule 1: Prioritize the nearest regular pellet unless danger is imminent.**
+  Efficient pellet collection is the main source of points and helps complete the level more quickly.
+
+- **Rule 2: Prefer pellets located in areas with a high concentration of other pellets.**
+  Staying in high-density zones reduces unnecessary movement and increases overall efficiency.
+
+### 🔴 Ghost Avoidance
+
+- **Rule 3: Avoid tiles within a defined danger radius of non-edible ghosts if the ghost is nearer to the Tile as the Agent.**
+  PacMan must maintain a safe distance to avoid being caught.
+
+- **Rule 4: If a ghost is approaching, retreat to the safest available tile.**
+  This fallback behavior improves PacMan’s chances of survival in critical situations.
+
+### 🔷 Power Pellet Strategy
+
+- **Rule 5: Move toward a power pellet if a ghost is nearby.**
+  This allows PacMan to escape danger and potentially reverse the situation.
+
+- **Rule 6: When powered up, actively chase and eat the nearest edible ghost — but only if more than two power pellets remain on the map.**
+  This ensures that PacMan uses power pellets strategically: If there are only two left, he focuses on collecting regular pellets instead of chasing ghosts, preserving power pellets for dangerous or tactical moments.
+  
+- **Rule 7: If powered up but no ghost is nearby, continue collecting pellets efficiently.**
+  This maximizes score during the powered-up state while remaining alert to ghost respawns.
+
+### 🔁 Exploration Fallback
+
+- **Rule 8: If no pellets or power pellets are currently visible, explore the least-visited areas.**
+  This promotes full map coverage and helps reveal any remaining pellets.
+
+### 📊 Rule Prioritization (Decision Hierarchy)
+
+1. **Powered up** and **≤ 2 power pellets used**? → **Chase nearest edible ghost**  
+   *(Only if the ghost is not in “eaten” mode and within chase range)*
+2. **Ghost nearby** and **power pellet visible**? → **Grab nearest power pellet**  
+   *(Tactical use of power pellets to reverse threat)*
+3. **Pellets visible** and **no immediate ghost threat**? → **Collect closest high-density safe pellet**  
+   *(Safe pellets are those PacMan can reach faster than any ghost)*
+4. **No safe pellets**? → **Retreat to the safest reachable tile**  
+   *(Choose tile furthest from all visible ghosts)*
+5. **No visible targets at all**? → **Explore the least visited tile**  
+   *(Encourages full map coverage and uncovering hidden pellets)*
+
+__________________________________________________________________________________________________________________________________________________________________________________________________________
 
 This project implements a grid-based simulation of the classic **Pac-Man** game using the **MARS framework**. Agents such as Pac-Man and the ghosts operate within a grid environment and interact based on simple AI rules. The model is fully visualizable through a separate Python visualization component, allowing real-time monitoring of agent behavior.
 

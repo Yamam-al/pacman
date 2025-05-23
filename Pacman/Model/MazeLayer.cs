@@ -194,8 +194,10 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
         
         if (PacManAgent.Lives == 0 || Context.CurrentTick >= Context.MaxTicks)
         {
+            PacManAgent.saveTable();
             Context.StepFlag = false;
             DataVisualizationServer.Stop();
+            
         }
     }
     

@@ -1,5 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using Mars.Interfaces.Annotations;
 using Mars.Interfaces.Environments;
@@ -8,22 +11,179 @@ namespace Pacman.Model;
 
 public class PacManAgent : MovingAgent
 {
-    private int _initialPowerPelletCount;
 
     public override void Init(MazeLayer layer)
     {
         Layer = layer;
         Position = new Position(StartX, StartY);
         Layer.PacManAgentEnvironment.Insert(this);
-        _initialPowerPelletCount = 4; //only for this grid
+        LoadQTable("../../../Resources/qtable.txt");
 
     }
+     public override void Tick()
+     {
+         int lastTickLives = Lives;
+         int lasTickScore = GetScore();
+         bool wasGhostNearby = IsGhostNearby(ExploreGhostPositions());
+         var currentState = BuildState();
+         var chosenAction = ChooseAction(currentState);
+         var goal = getGoalPosition(chosenAction);
+         MoveTowardsGoal(goal);
+         var reward = GetReward(lastTickLives, lasTickScore, wasGhostNearby);
+         var nextState = BuildState();
 
-    private double GetDistanceBetween(Position a, Position b)
+         UpdateQValue(currentState, chosenAction, reward, nextState);
+     }
+
+     //Q-Learning Logic
+    
+     private Dictionary<(string state, string action), double> _qTable = new();
+     private readonly List<string> _actions = new() { "Up", "Down", "Left", "Right" };
+     
+     private double GetQValue(string state, string action)
+     {
+         return _qTable.TryGetValue((state, action), out var value) ? value : 0.0;
+     }
+
+     private void UpdateQValue(string state, string action, double reward, string nextState, double alpha = 0.1, double gamma = 0.9)
+     {
+         double oldQ = GetQValue(state, action);
+         double maxNextQ = _actions.Max(a => GetQValue(nextState, a));
+
+         double newQ = oldQ + alpha * (reward + gamma * maxNextQ - oldQ);
+
+         _qTable[(state, action)] = newQ;
+     }
+
+
+     private string BuildState()
+     {
+         string direction = Direction.ToString();
+         bool ghostInFront = IsGhostInFront();
+         bool pelletInFront = IsPelletInFront();
+         bool powerPelletInFront = IsPowerPelletInFront();
+         double distToGhost = GetDistanceToClosestGhost();
+         double distToPowerPellet = GetDistanceToClosestPowerPellet();
+         bool poweredUp = PoweredUp;
+         int score = GetScore();
+
+         if (distToGhost > 5) distToGhost = 5;
+         if (distToPowerPellet > 5) distToPowerPellet = 5;
+
+         return $"D:{direction}_G:{ghostInFront}_P:{pelletInFront}_PPF:{powerPelletInFront}_DG:{distToGhost}_DPP:{distToPowerPellet}_PU:{poweredUp}_S:{score}";
+     }
+     
+     private double _epsilon = 0.7; // Entdeckungsrate
+     private string ChooseAction(string state)
+     {
+         var occupiable = ExploreOccupiablePositions();
+
+         var possibleActions = _actions
+             .Where(a => occupiable.Contains(GetTileInDirection(a)))
+             .ToList();
+
+         if (possibleActions.Count == 0)
+         {
+             // fallback: stay in place
+             return "Stay";
+         }
+
+         if (_random.NextDouble() < _epsilon)
+         {
+             // Explore
+             return possibleActions[_random.Next(possibleActions.Count)];
+         }
+
+         // Exploit: choose best known legal action
+         return possibleActions
+             .OrderByDescending(a => GetQValue(state, a))
+             .First();
+         
+     }
+
+     private double GetReward(int lastTickLives, int lasTickScore, bool wasGhostNearby)
+     {
+         var currentLives = Lives;
+         var currentScore = GetScore();
+         var isGhostNearby = IsGhostNearby(ExploreGhostPositions());
+         int scoreDiff = currentScore - lasTickScore;
+         if (currentLives < lastTickLives) return -100.0; // agent died 
+
+         if (scoreDiff >= 200)
+             return +10.0; // Ghost eaten
+         else if (scoreDiff >= 50)
+             return +1.0; // Power Pellet
+         else if (scoreDiff >= 10)
+             return +5.0; // Normal Pellet
+         if (wasGhostNearby & !isGhostNearby)
+             return +5.0; // Ghost eaten
+
+         return -0.1; // kleine Strafe fürs Rumstehen
+     }
+     
+
+     private void SaveQTable(string path)
+     {
+         // Export Q-table to clean lines (no duplicates)
+         var lines = _qTable.Select(kvp =>
+             $"{kvp.Key.state};{kvp.Key.action};{kvp.Value.ToString(CultureInfo.InvariantCulture)}");
+
+         // Overwrite entire file with updated Q-table
+         File.WriteAllLines(path, lines);
+
+     }
+     public void saveTable()
+     {
+         SaveQTable("../../../Resources/qtable.txt");
+     }
+
+     private void LoadQTable(string path)
+     {
+         if (!File.Exists(path)) return;
+
+         foreach (var line in File.ReadAllLines(path))
+         {
+             var parts = line.Split(';');
+             if (parts.Length == 3)
+             {
+                 var state = parts[0];
+                 var action = parts[1];
+                 var value = double.Parse(parts[2], CultureInfo.InvariantCulture);
+                 _qTable[(state, action)] = value; // overwrites if already exists
+             }
+         }
+     }
+
+
+
+     //Helper Methods
+     private Position GetTileInDirection(string action)
+     {
+         return action switch
+         {
+             "Up"    => new Position(Position.X, Position.Y - 1),
+             "Down"  => new Position(Position.X, Position.Y + 1),
+             "Left"  => new Position(Position.X - 1, Position.Y),
+             "Right" => new Position(Position.X + 1, Position.Y),
+             _       => Position
+         };
+     }
+     private double GetDistanceBetween(Position a, Position b)
     {
         return Math.Abs(a.X - b.X) + Math.Abs(a.Y - b.Y);
     }
 
+    private Position getGoalPosition(string action)
+    {
+        return action switch
+        {
+            "Up" => new Position(Position.X, Position.Y - 1),
+            "Down" => new Position(Position.X, Position.Y + 1),
+            "Left" => new Position(Position.X - 1, Position.Y),
+            "Right" => new Position(Position.X + 1, Position.Y),
+            _ => Position
+        };
+    }
     private int CountNearbyPellets(Position center, List<Position> allPellets, int radius = 2)
     {
         return allPellets.Count(p => p != center && GetDistanceBetween(center, p) <= radius);
@@ -61,112 +221,59 @@ public class PacManAgent : MovingAgent
             .OrderBy(p => _visitedTiles.ContainsKey(p) ? _visitedTiles[p] : 0)
             .FirstOrDefault();
     }
-
-
-    private int _usedPowerPellets = 0;
-    private bool WasPoweredUpLastTick = false;
-
-
-    public override void Tick()
+    
+    private bool IsGhostInFront()
     {
-        var powerPelletPositions = ExplorePowerPelletPositions();
-        var pelletPositions = ExplorePelletPositions();
-        // var ghostPositions = ExploreGhostPositions();
-        var ghostPositions = ExploreGhosts().Select(agent => agent.Position).ToList();
-        var occupiablePositions = ExploreOccupiablePositions();
+        var nextTile = GetTileInFront();
+        var ghostPositions = ExploreGhosts().Select(g => g.Position);
 
-        // Track how often this tile has been visited
-        if (_visitedTiles.ContainsKey(Position))
-            _visitedTiles[Position]++;
-        else
-            _visitedTiles[Position] = 1;
-        // Detect if a power pellet was just consumed
-        if (!PoweredUp && WasPoweredUpLastTick)
-        {
-            _usedPowerPellets++;
-        }
-        WasPoweredUpLastTick = PoweredUp;
-
-        // Rule 6: If powered up, chase the nearest ghost within range
-        if (PoweredUp && _usedPowerPellets <= 2)
-        {
-           var edibleGhosts = ExploreGhosts()
-                .Where(g =>
-                    GetDistance(g.Position) <= 5 &&
-                    g.Mode != GhostMode.Eaten) // ignore ghosts that are just eyes returning to spawn
-                .OrderBy(g => GetDistance(g.Position))
-                .ToList();
-
-            if (edibleGhosts.Count > 0)
-            {
-                // Go hunt!
-                MoveTowardsGoal(edibleGhosts.First().Position);
-                return;
-            }
-
-            // Rule 7: No edible ghosts nearby → fallback to pellet logic
-        }
-
-        // Rule 5: Tactical use of power pellets when ghosts are nearby
-        if (IsGhostNearby(ghostPositions) && powerPelletPositions.Count > 0)
-        {
-            // Move toward the nearest power pellet
-            var bestPowerPellet = powerPelletPositions
-                .OrderBy(GetDistance)
-                .First();
-
-            MoveTowardsGoal(bestPowerPellet);
-            return; // Skip other decisions this tick
-        }
-
-        // Rules 1–4: Pellet logic with danger avoidance
-        if (pelletPositions.Count > 0)
-        {
-            //Rule 3: avoid danger zones
-            var safePellets = pelletPositions
-                .Where(p => IsPacManCloserThanGhost(p, ghostPositions))
-                .ToList();
-
-            if (safePellets.Count > 0)
-            {
-                // Rule 1 + Rule 2: Prioritize nearest pellet, prefer dense clusters
-                var bestPellet = safePellets
-                    .Select(p => new
-                    {
-                        Pellet = p,
-                        Distance = GetDistance(p),
-                        ClusterScore = CountNearbyPellets(p, safePellets)
-                    })
-                    .OrderBy(x => x.Distance)
-                    .ThenByDescending(x => x.ClusterScore)
-                    .First().Pellet;
-
-                MoveTowardsGoal(bestPellet);
-            }
-            else
-            {
-                //RULE 4:  No safe pellet available – fallback behavior will apply
-
-                var safestTile = GetSafestPosition(occupiablePositions, ghostPositions);
-
-                if (safestTile != null)
-                {
-                    MoveTowardsGoal(safestTile);
-                    return;
-                }
-            }
-        }
-
-        // Rule 8: No pellets or power pellets → explore least visited area
-        var explorationTarget = GetLeastVisitedPosition(occupiablePositions);
-        if (explorationTarget != null)
-        {
-        //    MoveTowardsGoal(explorationTarget);
-        }
-        
+        return ghostPositions.Contains(nextTile);
     }
     
+    private bool IsPelletInFront()
+    {
+        var nextTile = GetTileInFront();
+        var pelletPositions = ExplorePelletPositions();
+
+        return pelletPositions.Contains(nextTile);
+    }
     
+    private bool IsPowerPelletInFront()
+    {
+        var nextTile = GetTileInFront();
+        var powerPellets = ExplorePowerPelletPositions();
+        return powerPellets.Contains(nextTile);
+    }
+
+    private double GetDistanceToClosestPowerPellet()
+    {
+        var powerPellets = ExplorePowerPelletPositions();
+        return powerPellets.Any()
+            ? powerPellets.Min(p => GetDistance(p))
+            : 10; // No power pellet visible
+    }
+
+
+    private Position GetTileInFront()
+    {
+        return Direction switch
+        {
+            Direction.Up    => new Position(Position.X, Position.Y - 1),
+            Direction.Down  => new Position(Position.X, Position.Y + 1),
+            Direction.Left  => new Position(Position.X - 1, Position.Y),
+            Direction.Right => new Position(Position.X + 1, Position.Y),
+            _ => Position
+        };
+    }
+
+    
+    private double GetDistanceToClosestGhost()
+    {
+        var ghostPositions = ExploreGhosts().Select(g => g.Position);
+        return ghostPositions.Any()
+            ? ghostPositions.Min(g => GetDistance(g))
+            : 10; // kein Ghost sichtbar
+    }
 
     /// <summary>
     /// Explores the environment and returns a list of positions of the ghosts.
@@ -186,6 +293,8 @@ public class PacManAgent : MovingAgent
         return Layer.GhostAgentEnvironment.Explore(Position, VisualRange, -1).ToList();
     }
 
+    private int _usedPowerPellets = 0;
+    private bool WasPoweredUpLastTick = false;
     private int GetScore() =>
         Layer.Score;
 
@@ -198,4 +307,6 @@ public class PacManAgent : MovingAgent
     public int PoweredUpTime { get; set; }
 
     [PropertyDescription] public int Lives { get; set; }
+
+   
 }

@@ -1,273 +1,176 @@
-﻿#nullable enable
+﻿// SmartGhostAgent.cs - Q-Learning Ghost
+
 using System;
-using System.IO;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
 using System.Linq;
 using Mars.Interfaces.Environments;
-using Mars.Numerics;
-
 
 namespace Pacman.Model;
 
 public class SmartGhostAgent : GhostAgent
 {
-    // Q-Learning Felder
-    private readonly Dictionary<string, Dictionary<string, double>> QTable = new();
-    private readonly Random rand = new();
-    private string? previousState = null;
-    private string? previousAction = null;
-    private double learningRate = 0.1;
-    private double discountFactor = 0.9;
-    private double explorationRate = 0.1;
+    public string GhostName { get; set; } = "Ghost";
+
+    // Q-Learning Tabelle im Format (state, action) => Q-Wert
+    private Dictionary<(string state, string action), double> _qTable = new();
+    
+    // Mögliche Bewegungsaktionen
+    private readonly List<string> _actions = new() { "Up", "Down", "Left", "Right" };
+    
+    private readonly Random _random = new();
+    private double _epsilon = 0.3; // Entdeckungsrate
+
+    // Initialisierung beim Start
+    public override void Init(MazeLayer layer)
+    {
+        Layer = layer;
+        Position = new Position(StartX, StartY);
+        Layer.GhostAgentEnvironment.Insert(this);
+        GhostName = Name ?? "Ghost" + StartX + "_" + StartY;
+        LoadQTable(); // Lade bestehende Q-Werte
+    }
+
+    // Haupttick-Methode, wird bei jedem Zeitschritt aufgerufen
     public override void Tick()
     {
-        if (ProcessGhostState()) return;
+        if (ProcessGhostState()) return; // Falls Ghost im "Eaten"-Modus ist, abbrechen
 
-        // Q-Learning BEGIN
-        string currentState = BuildState();
-        string chosenAction = ChooseAction(currentState);
-        Position target = DecideTarget(chosenAction);
+        string state = BuildState(); // Aktuellen Zustand ermitteln
+        string action = ChooseAction(state); // Beste (oder zufällige) Aktion wählen
+        var target = GetTileInDirection(action); // Zielposition berechnen
 
-        if (previousState != null && previousAction != null)
-        {
-            double reward = CalculateReward(); // Schritt 6
-            UpdateQValue(previousState, previousAction, reward, currentState); // Schritt 7
-        }
+        MoveTowardsGoal(target); // Bewegung durchführen
 
-        previousState = currentState;
-        previousAction = chosenAction;
+        string nextState = BuildState(); // Nächster Zustand nach Bewegung
+        double reward = CalculateReward(); // Belohnung berechnen
 
-        MoveTowardsGoal(target);
-      
-        
-        if (Layer.GetCurrentTick() ==180 )  // letzter Tick = steps - 1
-        {
-            SaveQTableToCsv();
-            Console.WriteLine("✔ Q-Table gespeichert!");
-        }
-        // Q-Learning END
-      
-
-        // Alte Logik 
-        /*
-        var pacMan = ExplorePacMan();
-        var teammates = ExploreTeam();
-        var foundPacMan = pacMan != null;
-        var target = GetRandomCell();
-
-        if (foundPacMan)
-        {
-            if (Frightened())
-            {
-                var pacManPosition = pacMan.Position;
-                target = ExploreOccupiablePositions()
-                    .OrderByDescending(spot => Distance.Euclidean(spot.X, spot.Y, pacManPosition.X, pacManPosition.Y))
-                    .FirstOrDefault();
-            }
-            else
-            {
-                EnterChaseMode();
-                target = pacMan.Position;
-            }
-        }
-        else
-        {
-            EnterScatterMode();
-        }
-        MoveTowardsGoal(target);
-        */
+        UpdateQValue(state, action, reward, nextState); // Q-Wert anpassen
     }
 
-    
-    /// <summary> Natalie
-    /// Builds a string representation of the current state for Q-learning.
-    /// This state includes whether PacMan is visible, the current ghost mode,
-    /// and a rough distance category to PacMan (if visible).
-    /// </summary>
-    /// <returns>A unique string describing the agent's current situation.</returns>
+    // Zustand zusammenbauen: Modus + PacMan Sichtbarkeit + Distanzkategorie
     private string BuildState()
     {
-        // Try to detect PacMan
         var pacMan = ExplorePacMan();
-        bool seesPacman = pacMan != null;
-
-        // Get the current ghost mode (Chase, Scatter, Frightened, etc.)
-        string mode = Mode.ToString();
-    
-        // Initialize distance category as unknown
-        string distanceCategory = "unknown";
-
-        // If PacMan is visible, calculate the distance to him
-        if (seesPacman)
-        {
-            var dist = GetDistance(pacMan.Position);
-
-            if (dist < 3)
-                distanceCategory = "near";
-            else if (dist < 6)
-                distanceCategory = "medium";
-            else
-                distanceCategory = "far";
-        }
-
-        // Build a string that uniquely describes this situation
-        return $"sees:{seesPacman};mode:{mode};distance:{distanceCategory}";
+        bool seesPacMan = pacMan != null;
+        double dist = seesPacMan ? GetDistance(pacMan.Position) : 10;
+        string distance = dist < 3 ? "near" : dist < 6 ? "mid" : "far";
+        return $"Mode:{Mode}_Sees:{seesPacMan}_Dist:{distance}";
     }
-    
-    /// <summary>Natalie
-    /// Chooses the best action based on the current state.
-    /// Uses epsilon-greedy strategy to sometimes explore random actions.
-    /// </summary>
-    /// <param name="state">The current state string</param>
-    /// <returns>The chosen action as string</returns>
+
+    // Aktion auswählen: zufällig oder beste bekannte Aktion
     private string ChooseAction(string state)
     {
-        var actions = new List<string> { "chase", "flee", "scatter", "random" };
+        var occupiable = ExploreOccupiablePositions();
+        var possibleActions = _actions
+            .Where(a => occupiable.Contains(GetTileInDirection(a)))
+            .ToList();
 
-        // If state not in Q-table, initialize it
-        if (!QTable.ContainsKey(state))
-            QTable[state] = actions.ToDictionary(a => a, a => 0.0);
+        if (possibleActions.Count == 0)
+            return "Stay"; // Keine Bewegung möglich
 
-        // Exploration: choose random action with probability ε
-        if (rand.NextDouble() < explorationRate)
-            return actions[rand.Next(actions.Count)];
+        // Mit Wahrscheinlichkeit _epsilon zufällige Aktion (Exploration)
+        if (_random.NextDouble() < _epsilon)
+            return possibleActions[_random.Next(possibleActions.Count)];
 
-        // Exploitation: choose the action with the highest Q-value
-        return QTable[state]
-            .OrderByDescending(entry => entry.Value)
-            .First().Key;
+        // Ansonsten beste bekannte Aktion (Exploitation)
+        return possibleActions
+            .OrderByDescending(a => GetQValue(state, a))
+            .First();
     }
-    /// <summary>Natalie
-    /// Converts a chosen action into a target position.
-    /// </summary>
-    /// <param name="action">The chosen action</param>
-    /// <returns>A position that the agent should move towards</returns>
-    private Position DecideTarget(string action)
+
+    // Q-Wert auslesen
+    private double GetQValue(string state, string action)
     {
-        var pacMan = ExplorePacMan();
-        var options = ExploreOccupiablePositions();
-
-        switch (action)
-        {
-            case "chase":
-                if (pacMan != null)
-                    return pacMan.Position;
-                break;
-
-            case "flee":
-                if (pacMan != null)
-                {
-                    // Move to the position farthest away from PacMan
-                    return options
-                        .OrderByDescending(pos => GetDistance(pacMan.Position))
-                        .FirstOrDefault();
-                }
-                break;
-
-            case "scatter":
-                return new Position(ScatterCellX, ScatterCellY);
-
-            case "random":
-                return options[rand.Next(options.Count)];
-        }
-
-        // fallback: choose any reachable cell
-        return GetRandomCell();
+        return _qTable.TryGetValue((state, action), out var value) ? value : 0.0;
     }
-    /// <summary>N
-    /// Calculates a reward based on current mode and situation.
-    /// </summary>
-    /// <returns>A numeric reward used for Q-learning</returns>
+
+    // Q-Wert aktualisieren mit Q-Learning Formel
+    private void UpdateQValue(string state, string action, double reward, string nextState, double alpha = 0.1, double gamma = 0.9)
+    {
+        double oldQ = GetQValue(state, action);
+        double maxNextQ = _actions.Max(a => GetQValue(nextState, a));
+        double newQ = oldQ + alpha * (reward + gamma * maxNextQ - oldQ);
+        _qTable[(state, action)] = newQ;
+    }
+
+    // Belohnungsfunktion abhängig vom Ghost-Modus
     private double CalculateReward()
     {
-        if (Mode == GhostMode.Eaten)
-            return -100; // Got eaten = bad
-
-        if (Mode == GhostMode.Frightened)
-            return -1; // Running away
-
-        if (Mode == GhostMode.Chase && ExplorePacMan() != null)
-            return +10; // Saw PacMan while chasing
-
-        if (Mode == GhostMode.Scatter)
-            return 0; // Neutral
-
-        return 0;
-    }
-    /// <summary>N
-    /// Updates the Q-value for the previous state and action.
-    /// </summary>
-    /// <param name="prevState">The previous state</param>
-    /// <param name="prevAction">The previous action</param>
-    /// <param name="reward">The reward received</param>
-    /// <param name="newState">The resulting state</param>
-    private void UpdateQValue(string prevState, string prevAction, double reward, string newState)
-    {
-        var actions = new List<string> { "chase", "flee", "scatter", "random" };
-
-        // Make sure both states exist in the Q-table
-        if (!QTable.ContainsKey(prevState))
-            QTable[prevState] = actions.ToDictionary(a => a, a => 0.0);
-
-        if (!QTable.ContainsKey(newState))
-            QTable[newState] = actions.ToDictionary(a => a, a => 0.0);
-
-        double oldQ = QTable[prevState][prevAction];
-        double maxFutureQ = QTable[newState].Values.Max();
-
-        double updatedQ = oldQ + learningRate * (reward + discountFactor * maxFutureQ - oldQ);
-
-        QTable[prevState][prevAction] = updatedQ;
-    }
-
-    /// <summary>
-    /// Saves the Q-table to a CSV file at Resources/ghost_qtable.csv
-    /// </summary>
-    private void SaveQTableToCsv()
-    {
-        var lines = new List<string> { "state,action,value" };
-
-        foreach (var state in QTable)
+        return Mode switch
         {
-            foreach (var action in state.Value)
+            GhostMode.Eaten => -100,
+            GhostMode.Frightened => -5,
+            GhostMode.Chase when ExplorePacMan() != null => +10,
+            _ => -0.1 // kleine Strafe fürs Rumstehen
+        };
+    }
+
+    // Q-Tabelle speichern
+    // Q-Tabelle speichern
+    public void SaveQTable()
+    {
+        var path = $"../../../Resources/qtable_{GhostName}.csv";
+        var lines = _qTable.Select(kvp =>
+            $"{kvp.Key.state};{kvp.Key.action};{kvp.Value.ToString(CultureInfo.InvariantCulture)}");
+
+        File.WriteAllLines(path, lines);
+    }
+
+
+
+    // Q-Tabelle laden
+    // Q-Tabelle laden
+    private void LoadQTable()
+    {
+        var path = $"../../../Resources/qtable_{GhostName}.csv";
+        if (!File.Exists(path)) return;
+
+        foreach (var line in File.ReadAllLines(path))
+        {
+            var parts = line.Split(';');
+            if (parts.Length == 3)
             {
-                lines.Add($"{state.Key},{action.Key},{action.Value}");
+                var state = parts[0];
+                var action = parts[1];
+                var value = double.Parse(parts[2], CultureInfo.InvariantCulture);
+                    _qTable[(state, action)] = value; // Einfacher Key: (state, action)
             }
         }
-
-        File.WriteAllLines("../../../Resources/ghost_qtable.csv", lines);
+        Console.WriteLine("Loaded Q Table: " + path + "with " + _qTable.Count + " entries.");
     }
 
-    /// <summary>N
-    /// Loads the Q-table from a CSV file at Resources/ghost_qtable.csv
-    /// </summary>
-    private void LoadQTableFromCsv()
+
+
+    // Zielposition aus Aktionsrichtung berechnen
+    private Position GetTileInDirection(string action)
     {
-        var path = "Resources/ghost_qtable.csv";
-        if (!System.IO.File.Exists(path)) return;
-
-        var lines = System.IO.File.ReadAllLines(path).Skip(1); // Skip header
-        foreach (var line in lines)
+        return action switch
         {
-            var parts = line.Split(',');
-            if (parts.Length != 3) continue;
-
-            var state = parts[0];
-            var action = parts[1];
-            if (!double.TryParse(parts[2], out double value)) continue;
-
-            if (!QTable.ContainsKey(state))
-                QTable[state] = new Dictionary<string, double>();
-
-            QTable[state][action] = value;
-        }
+            "Up" => new Position(Position.X, Position.Y - 1),
+            "Down" => new Position(Position.X, Position.Y + 1),
+            "Left" => new Position(Position.X - 1, Position.Y),
+            "Right" => new Position(Position.X + 1, Position.Y),
+            _ => Position
+        };
     }
 
+    // PacMan entdecken (im Sichtfeld)
+    private PacManAgent? ExplorePacMan()
+    {
+        return Layer.PacManAgentEnvironment.Explore(Position, VisualRange).FirstOrDefault();
+    }
 
-    /// <summary>
-    /// Processes the ghost state and returns true if the ghost is not controllable.
-    /// </summary>
-    /// <returns></returns>
+    // Begehbare Positionen im Umfeld ermitteln
+    private List<Position> ExploreOccupiablePositions()
+    {
+        return Layer.OccupiableSpotsEnvironment.Explore(Position, VisualRange, -1)
+            .Select(agent => agent.Position)
+            .ToList();
+    }
+
+    // Zustand des Ghosts prüfen (z. B. Eaten oder noch im Haus)
     private bool ProcessGhostState()
     {
         if (ReleaseTimer <= ReleaseTick)
@@ -275,73 +178,16 @@ public class SmartGhostAgent : GhostAgent
             ReleaseTimer++;
             return true;
         }
+
         if (Mode == GhostMode.Frightened)
-        {
-            if (Layer.GetCurrentTick() % 2 == 0) return true;
-            return false;
-        }
+            return Layer.GetCurrentTick() % 2 == 0;
+
         if (Mode == GhostMode.Eaten)
         {
             MoveTowardsGoal(new Position(HouseCellX, HouseCellY));
             return true;
         }
-        return false;
-    }
-    
-    /// <summary>
-    /// Explores the environment and returns a list of the teammates.
-    /// </summary>
-    private List<GhostAgent> ExploreTeam()
-    {
-        return Layer.GhostAgents
-            .Where(agent => agent != this)
-            .ToList();;
-    }
-    
-    /// <summary>
-    /// Explores the environment and returns the PacManAgent instance.
-    /// Can be null if no PacManAgent is found.
-    /// </summary>
-    private PacManAgent? ExplorePacMan() => Layer.PacManAgentEnvironment.Explore(Position, VisualRange).FirstOrDefault();
-    
-    
-    /// <summary>
-    /// Enters the chase mode if the ghost is in scatter mode.
-    /// </summary>
-    /// <returns></returns>
-    private bool EnterChaseMode()
-    {
-        if (Mode == GhostMode.Scatter)
-        {
-            Mode = GhostMode.Chase;
-            return true;
-        }
-        return false;
-    }
-    
-    /// <summary>
-    /// Enters the scatter mode if the ghost is in chase mode.
-    /// </summary>
-    /// <returns></returns>
-    private bool EnterScatterMode()
-    {
-        if (Mode == GhostMode.Chase)
-        {
-            Mode = GhostMode.Scatter;
-            return true;
-        }
-        return false;
-    }
-    
-    private bool Frightened() => Mode == GhostMode.Frightened;
-    
-    public override void Init(MazeLayer layer)
-    {
-        Layer = layer;
-        Position = new Position(StartX, StartY);
-        Layer.GhostAgentEnvironment.Insert(this);
 
-        LoadQTableFromCsv(); // ⬅️ Lade die Q-Tabelle beim Start
+        return false;
     }
-
 }

@@ -1,6 +1,6 @@
 {
   "globals": {
-    "steps": 2000,
+    "steps": 1000,
     "output": "csv"
   },
   "layers": [
@@ -10,7 +10,7 @@
       "mapping": [
         {
           "parameter": "Visualization",
-          "value": true
+          "value": false
         },
         {
           "parameter": "VisualizationTimeout",

@@ -195,6 +195,11 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
         if (PacManAgent.Lives == 0 || Context.CurrentTick >= Context.MaxTicks)
         {
             PacManAgent.saveTable();
+            foreach (var ghostAgent in GhostAgents)
+            {
+                SmartGhostAgent smartGhostAgent = (SmartGhostAgent) ghostAgent;
+                smartGhostAgent.SaveQTable();
+            }
             Context.StepFlag = false;
             DataVisualizationServer.Stop();
             

@@ -152,6 +152,7 @@ public class PacManAgent : MovingAgent
                  _qTable[(state, action)] = value; // overwrites if already exists
              }
          }
+         Console.WriteLine("Loaded Q Table: " + path + "with " + _qTable.Count + " entries.");
      }
 
 

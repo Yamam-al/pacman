@@ -27,12 +27,12 @@
     },
     {
       "name": "GhostAgent",
-      "count": 4,
+      "count": 0,
       "file": "Resources/ghost_agent.csv"
     },
     {
       "name": "SmartGhostAgent",
-      "count": 0,
+      "count": 4,
       "file": "Resources/ghost_agent.csv"
     }
   ]

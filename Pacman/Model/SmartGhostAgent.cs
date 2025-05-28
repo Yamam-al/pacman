@@ -111,7 +111,7 @@ public class SmartGhostAgent : GhostAgent
     // Q-Tabelle speichern
     public void SaveQTable()
     {
-        var path = $"../../../Resources/qtable_{GhostName}.csv";
+        var path = $@"C:\Users\alsho\RiderProjects\pacman2\Pacman\Resources\qtable_{GhostName}.csv";
         var lines = _qTable.Select(kvp =>
             $"{kvp.Key.state};{kvp.Key.action};{kvp.Value.ToString(CultureInfo.InvariantCulture)}");
 
@@ -124,7 +124,7 @@ public class SmartGhostAgent : GhostAgent
     // Q-Tabelle laden
     private void LoadQTable()
     {
-        var path = $"../../../Resources/qtable_{GhostName}.csv";
+        var path = $@"C:\Users\alsho\RiderProjects\pacman2\Pacman\Resources\qtable_{GhostName}.csv";
         if (!File.Exists(path)) return;
 
         foreach (var line in File.ReadAllLines(path))
@@ -138,7 +138,7 @@ public class SmartGhostAgent : GhostAgent
                     _qTable[(state, action)] = value; // Einfacher Key: (state, action)
             }
         }
-        Console.WriteLine("Loaded Q Table: " + path + "with " + _qTable.Count + " entries.");
+        //Console.WriteLine("Loaded Q Table: " + path + "with " + _qTable.Count + " entries.");
     }
 
 

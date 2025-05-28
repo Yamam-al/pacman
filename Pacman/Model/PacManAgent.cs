@@ -17,7 +17,7 @@ public class PacManAgent : MovingAgent
         Layer = layer;
         Position = new Position(StartX, StartY);
         Layer.PacManAgentEnvironment.Insert(this);
-        LoadQTable("../../../Resources/qtable.txt");
+        LoadQTable("C:\\Users\\alsho\\RiderProjects\\pacman2\\Pacman\\Resources\\qtable.txt");
 
     }
      public override void Tick()
@@ -134,7 +134,7 @@ public class PacManAgent : MovingAgent
      }
      public void saveTable()
      {
-         SaveQTable("../../../Resources/qtable.txt");
+         SaveQTable("C:\\Users\\alsho\\RiderProjects\\pacman2\\Pacman\\Resources\\qtable.txt");
      }
 
      private void LoadQTable(string path)
@@ -152,7 +152,7 @@ public class PacManAgent : MovingAgent
                  _qTable[(state, action)] = value; // overwrites if already exists
              }
          }
-         Console.WriteLine("Loaded Q Table: " + path + "with " + _qTable.Count + " entries.");
+         //Console.WriteLine("Loaded Q Table: " + path + "with " + _qTable.Count + " entries.");
      }
 
 

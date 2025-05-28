@@ -15,7 +15,6 @@ namespace Pacman.Model;
 
 public class MazeLayer : RasterLayer, ISteppedActiveLayer
 {
-
     /// <summary>
     ///     The initialization method of the GridLayer which spawns and stores the specified number of each agent type
     /// </summary>
@@ -28,7 +27,7 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
         UnregisterAgent unregisterAgentHandle)
     {
         if (Visualization) DataVisualizationServer.RunInBackground();
-        
+
         var initLayer = base.InitLayer(layerInitData, registerAgentHandle, unregisterAgentHandle);
 
         GhostAgentEnvironment = new SpatialHashEnvironment<GhostAgent>(Width, Height);
@@ -36,20 +35,24 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
         PelletEnvironment = new SpatialHashEnvironment<Pellet>(Width, Height);
         PowerPelletEnvironment = new SpatialHashEnvironment<PowerPellet>(Width, Height);
         OccupiableSpotsEnvironment = new SpatialHashEnvironment<OccupiableSpot>(Width, Height);
-        
+
         AgentManager = layerInitData.Container.Resolve<IAgentManager>();
 
-        GhostAgents = ValidateGhostConfiguration(layerInitData) ? 
-            AgentManager.Spawn<SmartGhostAgent, MazeLayer>().Cast<GhostAgent>().ToList() : 
-            AgentManager.Spawn<GhostAgent, MazeLayer>().ToList();
-        
-        
+        if (ValidateGhostConfiguration(layerInitData))
+        {
+            GhostAgents = AgentManager.Spawn<SmartGhostAgent, MazeLayer>().Cast<GhostAgent>().ToList();
+            SmartGhosts = true;
+        }
+        else
+            GhostAgents = AgentManager.Spawn<GhostAgent, MazeLayer>().ToList();
+
+
         PacManAgent = AgentManager.Spawn<PacManAgent, MazeLayer>().ToList().First();
         PacManAgent.Direction = Direction.Right;
-        
+
         Pellets = new List<Pellet>();
         PowerPellets = new List<PowerPellet>();
-        
+
         OccupiableSpots = new List<Position>();
         for (var x = 0; x < Width; x++)
         {
@@ -57,13 +60,14 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
             {
                 var type = this[x, y];
                 var position = Position.CreatePosition(x, y);
-                if (IsRoutable(position)) 
+                if (IsRoutable(position))
                 {
-                    var occupiableSpot = AgentManager.Spawn<OccupiableSpot, MazeLayer>(null, s => s.Position = position).Take(1).First();
+                    var occupiableSpot = AgentManager.Spawn<OccupiableSpot, MazeLayer>(null, s => s.Position = position)
+                        .Take(1).First();
                     OccupiableSpotsEnvironment.Insert(occupiableSpot);
                     OccupiableSpots.Add(position);
                 }
-                
+
                 var item = CreateItem(type, position);
                 if (item == null) continue;
                 if (item is Pellet pellet)
@@ -78,6 +82,7 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
                 }
             }
         }
+
         Score = 0;
 
         return initLayer;
@@ -95,53 +100,53 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
     ///     The environment of the Ghostagent agents
     /// </summary>
     public SpatialHashEnvironment<GhostAgent> GhostAgentEnvironment { get; set; }
-    
+
     /// <summary>
     ///     The environment of the Pacman agent
     /// </summary>
     public SpatialHashEnvironment<PacManAgent> PacManAgentEnvironment { get; set; }
-    
+
     /// <summary>
     ///    The environment of the pellets
     /// </summary>
     public SpatialHashEnvironment<Pellet> PelletEnvironment { get; set; }
-    
+
     /// <summary>
     ///    The environment of the power pellets
     /// </summary>
     public SpatialHashEnvironment<PowerPellet> PowerPelletEnvironment { get; set; }
-    
+
     /// <summary>
     ///  The environment of the occupiable spots
     /// </summary>
     public SpatialHashEnvironment<OccupiableSpot> OccupiableSpotsEnvironment { get; set; }
-    
-    
+
+
     /// <summary>
     ///  A collection that holds the occupiable spots
     /// </summary>
     public List<Position> OccupiableSpots { get; private set; }
-    
+
     /// <summary>
     /// A collection that holds the GhostAgent instances
     /// </summary>
     public List<GhostAgent> GhostAgents { get; private set; }
-    
+
     /// <summary>
     /// Reference to the PacManAgent instance
     /// </summary>
     public PacManAgent PacManAgent { get; set; }
-    
+
     /// <summary>
     ///  A collection that holds the Pellet instances
     /// </summary>
     public List<Pellet> Pellets { get; private set; }
-    
+
     /// <summary>
     /// A collection that holds the PowerPellet instances
     /// </summary>
     public List<PowerPellet> PowerPellets { get; private set; }
-    
+
     public IAgentManager AgentManager { get; private set; }
 
     public void Tick()
@@ -160,17 +165,17 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
         if (PacManAgent.PoweredUpTime > 0)
             PacManAgent.PoweredUpTime--;
         PacManAgent.PoweredUp = PacManAgent.PoweredUpTime > 0;
-        
+
         PacManAgent.HasMoved = false;
         foreach (var ghostAgent in GhostAgents)
         {
             ghostAgent.HasMoved = false;
             if (ghostAgent.Mode == GhostMode.Frightened && !PacManAgent.PoweredUp) ghostAgent.Mode = GhostMode.Scatter;
             if (ghostAgent.Mode == GhostMode.Eaten && ghostAgent.Position.Equals(
-                    Position.CreatePosition(ghostAgent.HouseCellX, ghostAgent.HouseCellY))) 
+                    Position.CreatePosition(ghostAgent.HouseCellX, ghostAgent.HouseCellY)))
                 ghostAgent.Mode = GhostMode.Scatter;
         }
-        
+
         if (Visualization)
         {
             while (!DataVisualizationServer.Connected())
@@ -185,29 +190,33 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
             agentData.AddRange(Pellets);
             agentData.AddRange(PowerPellets);
             DataVisualizationServer.SendData(Score, agentData);
-            
+
             while (DataVisualizationServer.CurrentTick != Context.CurrentTick + 1)
             {
                 Thread.Sleep(VisualizationTimeout);
             }
         }
-        
+
         if (PacManAgent.Lives == 0 || Context.CurrentTick >= Context.MaxTicks)
         {
             PacManAgent.saveTable();
-            foreach (var ghostAgent in GhostAgents)
+            if (SmartGhosts)
             {
-                SmartGhostAgent smartGhostAgent = (SmartGhostAgent) ghostAgent;
-                smartGhostAgent.SaveQTable();
+                Console.WriteLine("Saving Q-Tables of Smart Ghosts");
+                foreach (var ghostAgent in GhostAgents)
+                {
+                    SmartGhostAgent smartGhostAgent = (SmartGhostAgent)ghostAgent;
+                    smartGhostAgent.SaveQTable();
+                }
             }
+
             Context.StepFlag = false;
             DataVisualizationServer.Stop();
-            
         }
     }
-    
+
     public int Score { get; private set; }
-    
+
     public void PacManDie()
     {
         PacManAgent.Lives--;
@@ -236,13 +245,13 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
         var pellet = PelletEnvironment.Explore(PacManAgent.Position, 0.0, 1).FirstOrDefault();
         var powerPellet = PowerPelletEnvironment.Explore(PacManAgent.Position, 0.0, 1).FirstOrDefault();
         var ghosts = GhostAgentEnvironment.Explore(PacManAgent.Position, 0.0).ToList();
-        
+
         if (pellet != null)
         {
             Score += 10;
             pellet.RemoveFromSimulation();
         }
-        
+
         if (powerPellet != null)
         {
             Score += 50;
@@ -252,9 +261,10 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
             {
                 ghostAgent.Mode = GhostMode.Frightened;
             }
+
             powerPellet.RemoveFromSimulation();
         }
-        
+
         foreach (var ghost in ghosts)
         {
             if (PacManAgent.PoweredUp && ghost.Mode == GhostMode.Frightened)
@@ -269,11 +279,13 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
             }
         }
     }
-    
+
     private bool ValidateGhostConfiguration(LayerInitData layerInitData)
     {
-        var ghostMapping = layerInitData.AgentInitConfigs.FirstOrDefault(m => m.ModelType.TypeName == "Pacman.Model.GhostAgent");
-        var smartGhostMapping = layerInitData.AgentInitConfigs.FirstOrDefault(m => m.ModelType.TypeName == "Pacman.Model.SmartGhostAgent");
+        var ghostMapping =
+            layerInitData.AgentInitConfigs.FirstOrDefault(m => m.ModelType.TypeName == "Pacman.Model.GhostAgent");
+        var smartGhostMapping =
+            layerInitData.AgentInitConfigs.FirstOrDefault(m => m.ModelType.TypeName == "Pacman.Model.SmartGhostAgent");
 
         if (ghostMapping is null)
             throw new ArgumentException("GhostAgent is missing in the configuration.");
@@ -288,12 +300,11 @@ public class MazeLayer : RasterLayer, ISteppedActiveLayer
 
         return smartGhosts;
     }
-    
-    [PropertyDescription]
-    public bool Visualization { get; set; }
-    
-    [PropertyDescription]
-    public int VisualizationTimeout { get; set; }
+
+    [PropertyDescription] public bool Visualization { get; set; }
+    [PropertyDescription] public bool SmartGhosts { get; set; }
+
+    [PropertyDescription] public int VisualizationTimeout { get; set; }
 
     private readonly double _epsilon = 0.0001;
 }
